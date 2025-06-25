@@ -1,52 +1,36 @@
-# Grep App MCP Server Task
+# Current Task: Modify search-code.ts to Return Numbered Responses
 
-## Task: Add structured logging to grep-app-server.ts
+## Task Description
+Modify the search-code.ts tool to return numbered responses from search results so that the model can choose from them.
 
-**Goal:** Implement structured logging for the grep-app-server.ts and store logs in a logs directory.
+## Current Code Analysis
+The code currently:
+1. Takes search parameters and executes a search using grep.app API
+2. Returns either JSON or formatted text results
+3. Uses formatResultsAsText utility for text formatting
 
-## Tasks
+## Implementation Plan
 
-## Diagnosing JSON parameter parsing error
-[X] Check how the tool is being called
-[X] Verify implementation against FastMCP documentation
-[X] Fix the issue by updating server instructions to include example usage
+[X] 1. Modify the search parameters schema
+   - Added new optional parameter 'numberedOutput' to schema
+   - Updated SearchParams interface in types.ts
 
-## Add structured logging to grep-app-server.ts
-[X] Research and select a logging library (Winston)
-[X] Create a logs directory
-[X] Configure the logger with JSON formatting and file rotation
-[X] Integrate structured logging throughout the server code
-[ ] Install required dependencies
-[ ] Test logging functionality
+[X] 2. Update the response formatting
+   - Added new formatResultsAsNumberedList function
+   - Format: "1. [repo/path:line] code"
 
-# Implementation Details
+[X] 3. Modify the execute function
+   - Added handling for numberedOutput option
+   - Returns numbered list when numberedOutput is true
 
-## Structured Logging Implementation
-1. **Logging Library**: Winston with winston-daily-rotate-file for log rotation
-2. **Log Directory**: Created a `logs` directory in the project root
-3. **Log Format**: JSON format with timestamp, log level, and structured metadata
-4. **Log Files**:
-   - `application-%DATE%.log` - All logs
-   - `error-%DATE%.log` - Error logs only
-5. **Log Rotation**: Daily rotation with 14-day retention and 20MB max file size
-6. **Log Levels**: Uses environment variable LOG_LEVEL or defaults to 'info'
-
-## Required Dependencies
-Before running the server, the following dependencies need to be installed:
+## Expected Output Format
 ```
-npm install winston winston-daily-rotate-file @types/winston
+1. [repo/path.ext:line] Code snippet 1
+2. [repo/path.ext:line] Code snippet 2
+3. [repo/path.ext:line] Code snippet 3
+...
 ```
 
-# Lessons
-
-1. When using FastMCP, tool parameters must be passed as a single JSON object string, not as separate arguments.
-   - Incorrect: `call searchCode query="tower governor create"`
-   - Correct: `call searchCode '{"query": "tower governor create"}'`
-
-2. FastMCP server instructions should include clear examples of how to call tools with the correct parameter format.
-
-3. When implementing structured logging:
-   - Use proper TypeScript interfaces for logger types to avoid lint errors
-   - Log at different severity levels (debug, info, warn, error) appropriately
-   - Include relevant contextual data as structured metadata
-   - Handle both synchronous and asynchronous errors with proper logging
+## Lessons
+- Keep track of any issues encountered
+- Note any improvements for future reference

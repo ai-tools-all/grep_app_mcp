@@ -10,7 +10,7 @@ import { logger } from './logger.js';
  * @returns An object containing the next page number, the hits found, and the total count.
  */
 export async function fetchGrepApp(page: number, args: SearchParams): Promise<{ nextPage: number | null, hits: IHits, count: number }> {
-    const params: any = { q: args.query, page };
+    const params: any = { q: args.query, page, per_page: 20 };
     const url = "https://grep.app/api/search";
 
     logger.debug('Preparing grep.app API request', { page, query: args.query });
@@ -35,7 +35,7 @@ export async function fetchGrepApp(page: number, args: SearchParams): Promise<{ 
             addHit(hits, hitData.repo.raw, hitData.path.raw, hitData.content.snippet);
         }
 
-        const hasMorePages = count > 10 * page;
+        const hasMorePages = count > 20 * page;
         const nextPage = hasMorePages ? page + 1 : null;
         return { nextPage, hits, count };
     } catch (error) {
@@ -72,8 +72,8 @@ export async function searchCode(args: SearchParams, { log, reportProgress }: an
     await reportProgress({ progress: 10, total: totalResultCount });
 
     while (nextPage && nextPage <= 100) { // Paginate up to 100 pages
-        logger.info(`Fetching page ${nextPage} of ${Math.ceil(count / 10)}...`, { page: nextPage, totalPages: Math.ceil(count / 10) });
-        log.info(`Fetching page ${nextPage} of ${Math.ceil(count / 10)}...`);
+        logger.info(`Fetching page ${nextPage} of ${Math.ceil(count / 20)}...`, { page: nextPage, totalPages: Math.ceil(count / 20) });
+        log.info(`Fetching page ${nextPage} of ${Math.ceil(count / 20)}...`);
         
         // Add a small delay to be respectful to the API
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -82,7 +82,7 @@ export async function searchCode(args: SearchParams, { log, reportProgress }: an
         nextPage = pageResult.nextPage;
         mergeHits(totalHits, pageResult.hits);
 
-        await reportProgress({ progress: (nextPage ? nextPage - 1 : 100) * 10, total: totalResultCount });
+        await reportProgress({ progress: (nextPage ? nextPage - 1 : 100) * 20, total: totalResultCount });
     }
 
     const repoCount = Object.keys(totalHits.hits).length;

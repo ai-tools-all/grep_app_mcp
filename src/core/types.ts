@@ -55,6 +55,7 @@ export interface DisconnectEvent {
 export interface SearchParams {
     query: string;
     jsonOutput?: boolean;
+    numberedOutput?: boolean;
     caseSensitive?: boolean;
     useRegex?: boolean;
     wholeWords?: boolean;

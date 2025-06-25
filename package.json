@@ -14,10 +14,12 @@
   "description": "",
   "type": "module",
   "dependencies": {
+    "@octokit/rest": "^22.0.0",
     "@types/winston": "^2.4.4",
     "axios": "^1.10.0",
     "cheerio": "^1.1.0",
     "fastmcp": "^3.5.0",
+    "octokit": "^3.1.2",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0",
     "zod": "^3.25.67"

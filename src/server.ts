@@ -15,7 +15,7 @@ call searchCode '{"query": "your search query", "langFilter": "TypeScript"}'`
 
 // Register all tools
 for (const tool of allTools) {
-    server.addTool(tool);
+    server.addTool(tool as any);
 }
 
 // Register server event handlers for logging
@@ -42,22 +42,22 @@ server.on('disconnect', (event: DisconnectEvent) => {
 
 // Start the server.
 // Using "httpStream" transport enables both HTTP Streaming (/mcp) and SSE (/sse) endpoints.
-logger.info('Starting FastMCP server', { port: 8602 });
+logger.info('Starting FastMCP server', { port: 8603 });
 
 server.start({
     transportType: "httpStream",
     httpStream: {
-        port: 8602,
+        port: 8603,
     },
     // health: {
     //     enabled: true,
     // }
 }).then(() => {
     logger.info('FastMCP server started successfully', {
-        port: 8602,
+        port: 8603,
         endpoints: {
-            http: 'http://localhost:8602/mcp',
-            sse: 'http://localhost:8602/sse'
+            http: 'http://localhost:8603/mcp',
+            sse: 'http://localhost:8603/sse'
         }
     });
 }).catch(error => {
@@ -66,6 +66,6 @@ server.start({
 });
 
 // Also log to console for visibility
-console.log(`FastMCP server for grep.app is running on port 8602.`);
-console.log(`- HTTP Streaming endpoint: http://localhost:8602/mcp`);
-console.log(`- SSE endpoint: http://localhost:8602/sse`);
+console.log(`FastMCP server for grep.app is running on port 8603.`);
+console.log(`- HTTP Streaming endpoint: http://localhost:8603/mcp`);
+console.log(`- SSE endpoint: http://localhost:8603/sse`);

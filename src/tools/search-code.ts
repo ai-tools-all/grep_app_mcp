@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { UserError } from 'fastmcp';
 import { logger, searchCode, SearchParams } from '../core/index.js';
-import { formatResultsAsText } from '../utils/formatters.js';
+import { formatResultsAsText, formatResultsAsNumberedList } from '../utils/formatters.js';
 
 /**
  * Schema for the searchCode tool parameters
@@ -9,6 +9,7 @@ import { formatResultsAsText } from '../utils/formatters.js';
 export const searchCodeSchema = z.object({
     query: z.string().describe("The search query string."),
     jsonOutput: z.boolean().optional().default(false).describe("If true, return results as a JSON object. Otherwise, return formatted text."),
+    numberedOutput: z.boolean().optional().default(false).describe("If true, return results as a numbered list for model selection."),
     caseSensitive: z.boolean().optional().describe("Perform a case-sensitive search."),
     useRegex: z.boolean().optional().describe("Treat the query as a regular expression. Cannot be used with wholeWords."),
     wholeWords: z.boolean().optional().describe("Search for whole words only. Cannot be used with useRegex."),
@@ -61,6 +62,8 @@ export const searchCodeTool = {
             
             if (args.jsonOutput) {
                 return JSON.stringify(hits.hits, null, 2);
+            } else if (args.numberedOutput) {
+                return formatResultsAsNumberedList(hits.hits);
             } else {
                 return formatResultsAsText(hits.hits);
             }

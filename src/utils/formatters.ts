@@ -1,6 +1,27 @@
 import { SearchResult } from '../core/types.js';
 
 /**
+ * Formats the search results into a numbered list for model selection.
+ * @param results The search results.
+ * @returns A numbered list of results.
+ */
+export function formatResultsAsNumberedList(results: SearchResult): string {
+    let output = '';
+    let counter = 1;
+
+    for (const [repo, pathData] of Object.entries(results as Record<string, any>)) {
+        for (const [path, lines] of Object.entries(pathData as Record<string, any>)) {
+            for (const [lineNum, line] of Object.entries(lines)) {
+                output += `${counter}. [${repo}/${path}:${lineNum}] ${line}\n`;
+                counter++;
+            }
+        }
+    }
+
+    return output;
+}
+
+/**
  * Formats the search results into a human-readable string.
  * @param results The search results.
  * @returns A formatted string.
