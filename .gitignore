@@ -2,3 +2,4 @@ node_modules
 logs
 
 dist
+dist_old

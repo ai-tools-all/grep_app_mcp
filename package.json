@@ -1,11 +1,11 @@
 {
   "name": "grep_app_mcp",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/grep-app-server.js",
-    "dev": "tsx grep-app-server.ts",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
