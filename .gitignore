@@ -4,3 +4,4 @@ logs
 dist
 dist_old
 cache
+.aider*

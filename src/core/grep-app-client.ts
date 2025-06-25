@@ -1,14 +1,8 @@
 import axios from 'axios';
-import { GrepAppResponse, SearchParams } from './types.js';
+import { GrepAppResponse, SearchParams, SearchParamsSchema } from './types.js';
 import { IHits, createHits, addHit, mergeHits } from './hits.js';
 import { logger } from './logger.js';
-import fs from 'fs/promises';
-import path from 'path';
-import crypto from 'crypto';
-
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-const MAX_CACHE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB in bytes
-const CACHE_DIR = path.join(process.cwd(), 'cache');
+import { generateCacheKey, getCachedData, cacheData } from './cache.js';
 
 /**
  * Fetches a single page of results from the grep.app API.
@@ -16,168 +10,47 @@ const CACHE_DIR = path.join(process.cwd(), 'cache');
  * @param args The search arguments.
  * @returns An object containing the next page number, the hits found, and the total count.
  */
-interface CacheEntry<T> {
-    data: T;
-    timestamp: number;
-    size: number;
-}
-
-function getCacheKey(page: number, args: SearchParams): string {
-    const key = JSON.stringify({ page, ...args });
-    return crypto.createHash('md5').update(key).digest('hex');
-}
-
-async function getCachedResults(cacheKey: string): Promise<{ nextPage: number | null, hits: IHits, count: number } | null> {
-    try {
-        const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
-        const data = await fs.readFile(cacheFile, 'utf-8');
-        const entry = JSON.parse(data) as CacheEntry<{ nextPage: number | null, hits: IHits, count: number }>;
-        
-        // Check if cache entry has expired
-        if (Date.now() - entry.timestamp > CACHE_TTL) {
-            logger.debug('Cache expired, deleting file', { cacheKey });
-            await fs.unlink(cacheFile).catch(() => {}); // Delete expired cache
-            return null;
-        }
-        
-        const ageInMinutes = Math.round((Date.now() - entry.timestamp) / (60 * 1000));
-        logger.info('Cache hit! Serving results from cache', { 
-            cacheKey, 
-            ageInMinutes,
-            expiresInMinutes: Math.round((CACHE_TTL - (Date.now() - entry.timestamp)) / (60 * 1000))
-        });
-        
-        return entry.data;
-    } catch (error) {
-        return null;
-    }
-}
-
-async function cleanupCache(): Promise<void> {
-    logger.debug('Starting cache cleanup');
-    try {
-        const files = await fs.readdir(CACHE_DIR);
-        let totalSize = 0;
-        const cacheFiles: { file: string; stats: Awaited<ReturnType<typeof fs.stat>> }[] = [];
-
-        // Get file stats and calculate total size
-        for (const file of files) {
-            if (!file.endsWith('.json')) continue;
-            const filePath = path.join(CACHE_DIR, file);
-            const stats = await fs.stat(filePath);
-            totalSize += Number(stats.size);
-            cacheFiles.push({ file: filePath, stats });
-        }
-
-        // If total size exceeds limit, delete oldest files
-        if (totalSize > MAX_CACHE_SIZE) {
-            cacheFiles.sort((a, b) => a.stats.mtime.getTime() - b.stats.mtime.getTime());
-            
-            logger.info('Cache size exceeds limit, cleaning up', {
-                currentSize: totalSize,
-                maxSize: MAX_CACHE_SIZE,
-                filesToClean: cacheFiles.length
-            });
-            
-            while (totalSize > MAX_CACHE_SIZE && cacheFiles.length > 0) {
-                const oldestFile = cacheFiles.shift();
-                if (oldestFile) {
-                    await fs.unlink(oldestFile.file);
-                    totalSize -= Number(oldestFile.stats.size);
-                    logger.debug('Deleted old cache file', { file: oldestFile.file });
-                }
-            }
-        }
-    } catch (error) {
-        logger.error('Cache cleanup failed', { error });
-    }
-}
-
-async function cacheResults(cacheKey: string, results: { nextPage: number | null, hits: IHits, count: number }): Promise<void> {
-    try {
-        await fs.mkdir(CACHE_DIR, { recursive: true });
-        const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
-        
-        const entry: CacheEntry<typeof results> = {
-            data: results,
-            timestamp: Date.now(),
-            size: Buffer.from(JSON.stringify(results)).length
-        };
-        
-        await fs.writeFile(cacheFile, JSON.stringify(entry), 'utf-8');
-        logger.debug('Cached results saved', { cacheKey });
-        
-        // Run cleanup in the background
-        cleanupCache().catch(error => {
-            logger.error('Background cache cleanup failed', { error });
-        });
-    } catch (error) {
-        logger.error('Failed to cache results', { error, cacheKey });
-    }
-}
-
-export async function fetchGrepApp(page: number, args: SearchParams): Promise<{ nextPage: number | null, hits: IHits, count: number }> {
-    const cacheKey = getCacheKey(page, args);
-    const cachedResults = await getCachedResults(cacheKey);
+async function fetchGrepApp(page: number, args: SearchParams): Promise<{ nextPage: number | null, hits: IHits, count: number }> {
+    const cacheKey = generateCacheKey({ query: args.query, page });
     
-    if (cachedResults) {
-        return cachedResults;
+    // Try to get from cache first
+    const cached = await getCachedData<{ nextPage: number | null, hits: IHits, count: number }>(cacheKey);
+    if (cached) {
+        return cached.data;
     }
-    
-    logger.info('Cache miss! Fetching fresh results from API', { 
-        cacheKey, 
-        page,
-        query: args.query
+
+    // If not in cache, fetch from API
+    const response = await axios.get<GrepAppResponse>('https://grep.app/api/search', {
+        params: {
+            q: args.query,
+            page: page.toString(),
+            case: args.caseSensitive ? '1' : '0',
+            regexp: args.useRegex ? '1' : '0',
+            words: args.wholeWords ? '1' : '0',
+            repo: args.repoFilter || '',
+            path: args.pathFilter || '',
+            lang: args.langFilter || ''
+        }
     });
 
-    const params: any = { q: args.query, page, per_page: 20 };
-    const url = "https://grep.app/api/search";
+    const hits = createHits();
+    const hitData = response.data.hits.hits;
 
-    logger.debug('Preparing grep.app API request', { page, query: args.query });
-
-    if (args.useRegex) params.regexp = 'true';
-    else if (args.wholeWords) params.words = 'true';
-    if (args.caseSensitive) params.case = 'true';
-    if (args.repoFilter) params['f.repo.pattern'] = args.repoFilter;
-    if (args.pathFilter) params['f.path.pattern'] = args.pathFilter;
-    if (args.langFilter) params['f.lang'] = args.langFilter.split(',');
-
-    try {
-        logger.debug('Sending request to grep.app API', { url, params });
-        const response = await axios.get<GrepAppResponse>(url, { params });
-        const data = response.data;
-        const count = data.facets.count;
-        const hits = createHits();
-
-        logger.debug('Received response from grep.app API', { count, hitsCount: data.hits.hits.length });
-
-        for (const hitData of data.hits.hits) {
-            addHit(hits, hitData.repo.raw, hitData.path.raw, hitData.content.snippet);
-        }
-
-        const hasMorePages = count > 20 * page;
-        const nextPage = hasMorePages ? page + 1 : null;
-        const results = { nextPage, hits, count };
-        await cacheResults(cacheKey, results);
-        logger.info('Results cached successfully', { 
-            cacheKey,
-            page,
-            size: Buffer.from(JSON.stringify(results)).length
-        });
-        return results;
-    } catch (error) {
-        if (axios.isAxiosError(error)) {
-            const errorMessage = `API request failed: ${error.response?.statusText || error.message}`;
-            logger.error('grep.app API request failed', { 
-                error: error.message, 
-                status: error.response?.status,
-                statusText: error.response?.statusText
-            });
-            throw new Error(errorMessage);
-        }
-        logger.error('Unknown error during API request', { error });
-        throw error;
+    // Process and add hits
+    for (const hit of hitData) {
+        addHit(hits, hit.repo.raw, hit.path.raw, hit.content.snippet);
     }
+
+    const results = {
+        nextPage: page < response.data.facets.pages ? page + 1 : null,
+        hits,
+        count: response.data.facets.count
+    };
+
+    // Cache the results
+    await cacheData(cacheKey, results, args.query);
+
+    return results;
 }
 
 /**
@@ -186,37 +59,53 @@ export async function fetchGrepApp(page: number, args: SearchParams): Promise<{ 
  * @param context The FastMCP tool context for logging and progress reporting.
  * @returns A Hits object containing all the found results.
  */
-export async function searchCode(args: SearchParams, { log, reportProgress }: any): Promise<IHits> {
-    // Log to both FastMCP's log and our Winston logger
-    logger.info(`Starting code search for query: "${args.query}"`, { query: args.query });
-    log.info(`Starting code search for query: "${args.query}"`);
-    
-    let page = 1;
-    let { nextPage, hits: totalHits, count } = await fetchGrepApp(page, args);
-    const totalResultCount = Math.min(count, 1000); // API is limited to 100 pages.
-
-    logger.info(`Found ${count} total results, will fetch up to ${totalResultCount}`, { count, totalResultCount });
-    await reportProgress({ progress: 10, total: totalResultCount });
-
-    while (nextPage && nextPage <= 100) { // Paginate up to 100 pages
-        logger.info(`Fetching page ${nextPage} of ${Math.ceil(count / 20)}...`, { page: nextPage, totalPages: Math.ceil(count / 20) });
-        log.info(`Fetching page ${nextPage} of ${Math.ceil(count / 20)}...`);
+export const searchTool = {
+    name: 'search',
+    description: 'Search code across repositories using grep.app',
+    parameters: SearchParamsSchema,
+    annotations: {
+        title: 'Code Search',
+        readOnlyHint: true,
+        openWorldHint: true
+    },
+    execute: async (args: SearchParams, { log, reportProgress }: any) => {
+        // Log to both FastMCP's log and our Winston logger
+        logger.info(`Starting code search for query: "${args.query}"`, { query: args.query });
+        log.info(`Starting code search for query: "${args.query}"`);
         
-        // Add a small delay to be respectful to the API
-        await new Promise(resolve => setTimeout(resolve, 500));
+        let page = 1;
+        let allHits = createHits();
+        let totalCount = 0;
 
-        const pageResult = await fetchGrepApp(nextPage, args);
-        nextPage = pageResult.nextPage;
-        mergeHits(totalHits, pageResult.hits);
+        while (true) {
+            const results = await fetchGrepApp(page, args);
+            mergeHits(allHits, results.hits);
+            totalCount = results.count;
 
-        await reportProgress({ progress: (nextPage ? nextPage - 1 : 100) * 20, total: totalResultCount });
+            // Report progress
+            const progress = Math.min(page * 10, totalCount);
+            await reportProgress({ progress, total: totalCount });
+
+            if (!results.nextPage || page >= 5) break;
+            page = results.nextPage;
+        }
+
+        const repoCount = Object.keys(allHits.hits).length;
+        logger.info(`Search complete. Found matches in ${repoCount} repositories.`, { repoCount });
+        log.info(`Search complete. Found matches in ${repoCount} repositories.`);
+
+        // Cache the complete search results for batch retrieval
+        const completeCacheKey = generateCacheKey({ query: args.query });
+        const completeResults = {
+            nextPage: null,
+            hits: allHits,
+            count: totalCount
+        };
+        await cacheData(completeCacheKey, completeResults, args.query);
+
+        return {
+            hits: allHits,
+            count: totalCount
+        };
     }
-
-    const repoCount = Object.keys(totalHits.hits).length;
-    logger.info(`Search complete. Found matches in ${repoCount} repositories.`, { repoCount });
-    log.info(`Search complete. Found matches in ${repoCount} repositories.`);
-    
-    await reportProgress({ progress: totalResultCount, total: totalResultCount });
-
-    return totalHits;
-}
+};

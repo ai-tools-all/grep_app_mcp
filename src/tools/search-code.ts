@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { UserError } from 'fastmcp';
-import { logger, searchCode, SearchParams } from '../core/index.js';
+import { logger, SearchParams } from '../core/index.js';
+import { searchTool as grepAppSearchTool } from '../core/grep-app-client.js';
 import { formatResultsAsText, formatResultsAsNumberedList } from '../utils/formatters.js';
 
 /**
@@ -50,22 +51,22 @@ export const searchCodeTool = {
                 } 
             });
             
-            const hits = await searchCode(args, { log, reportProgress });
+            const result = await grepAppSearchTool.execute(args, { log, reportProgress });
 
-            if (Object.keys(hits.hits).length === 0) {
+            if (Object.keys(result.hits.hits).length === 0) {
                 logger.info("No search results found", { query: args.query });
                 return "No results found for your query.";
             }
 
-            const repoCount = Object.keys(hits.hits).length;
+            const repoCount = Object.keys(result.hits.hits).length;
             logger.info("Search results ready to return", { repoCount, format: args.jsonOutput ? 'json' : 'text' });
             
             if (args.jsonOutput) {
-                return JSON.stringify(hits.hits, null, 2);
+                return JSON.stringify(result.hits.hits, null, 2);
             } else if (args.numberedOutput) {
-                return formatResultsAsNumberedList(hits.hits);
+                return formatResultsAsNumberedList(result.hits.hits);
             } else {
-                return formatResultsAsText(hits.hits);
+                return formatResultsAsText(result.hits.hits);
             }
         } catch (error: any) {
             logger.error("Search execution failed", { error: error.message, stack: error.stack });
