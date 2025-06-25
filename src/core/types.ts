@@ -218,7 +218,9 @@ export const BatchRetrievalParamsSchema = z.object({
         .describe('Original search query'),
     resultNumbers: z.array(z.number().int().positive())
         .optional()
-        .describe('List of result numbers to retrieve')
+        .describe('List of result numbers to retrieve'),
+    page: z.number().int().positive().optional().describe('Page number for pagination'),
+    pageSize: z.number().int().positive().optional().describe('Number of results per page')
 });
 
 export const BatchFileResultSchema = z.object({
@@ -240,7 +242,11 @@ export const BatchRetrievalResultSchema = z.object({
     files: z.array(BatchFileResultSchema)
         .describe('Array of file results'),
     error: z.string().optional()
-        .describe('Global error message if entire operation failed')
+        .describe('Global error message if entire operation failed'),
+    page: z.number().int().positive().optional(),
+    pageSize: z.number().int().positive().optional(),
+    totalPages: z.number().int().positive().optional(),
+    totalResults: z.number().int().positive().optional()
 });
 
 export const CachedSearchResultSchema = z.object({

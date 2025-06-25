@@ -86,103 +86,115 @@ export async function batchRetrieveFiles(
 ): Promise<BatchRetrievalResult> {
     try {
         const { log } = context;
-        log.info(`Starting batch retrieval for query: "${params.query}"`);
+        const { query, resultNumbers, page = 1, pageSize = 10 } = params;
+        log.info(`Starting batch retrieval for query: "${query}"`);
 
         // Get cached hits
-        const cachedHits = await getQueryResults(params.query);
+        const cachedHits = await getQueryResults(query);
         if (!cachedHits) {
             return {
                 success: false,
                 files: [],
-                error: `No cached results found for query: ${params.query}`
+                error: `No cached results found for query: ${query}`
             };
         }
 
-        // If no result numbers specified, return error
-        if (!params.resultNumbers || params.resultNumbers.length === 0) {
+        // Flatten hits
+        const allNumberedHits = flattenHits(cachedHits);
+        
+        // Determine which hits to process
+        let hitsToProcess = allNumberedHits;
+        if (resultNumbers && resultNumbers.length > 0) {
+            log.info(`Filtering for result numbers: ${resultNumbers.join(', ')}`);
+            const resultSet = new Set(resultNumbers);
+            hitsToProcess = allNumberedHits.filter(h => resultSet.has(h.number));
+        }
+
+        if (hitsToProcess.length === 0) {
             return {
                 success: false,
                 files: [],
-                error: 'No result numbers specified'
+                error: 'No results found for the given query or result numbers.'
             };
         }
-        log.info(`Retrieving result numbers: ${params.resultNumbers.join(', ')}`);
 
-        // Flatten hits and find the requested files
-        const numberedHits = flattenHits(cachedHits);
+        // Paginate the results
+        const totalResults = hitsToProcess.length;
+        const totalPages = Math.ceil(totalResults / pageSize);
+        const startIndex = (page - 1) * pageSize;
+        const pageHits = hitsToProcess.slice(startIndex, startIndex + pageSize);
+
+        if (pageHits.length === 0) {
+            return {
+                success: true,
+                files: [],
+                page,
+                pageSize,
+                totalPages,
+                totalResults,
+            };
+        }
+
+        // Build file requests for the current page
         const fileRequests: GitHubFileRequest[] = [];
-        const selectedHits = new Map<number, NumberedHit>();
-
-        for (const num of params.resultNumbers) {
-            const hit = numberedHits.find(h => h.number === num);
-            if (!hit) {
-                logger.warn(`Result number ${num} not found in cached hits.`);
-                continue;
-            }
-
+        for (const hit of pageHits) {
             const repoInfo = parseGitHubRepo(hit.repo);
             if (!repoInfo) {
                 logger.warn(`Invalid GitHub repo format: ${hit.repo}`);
                 continue;
             }
-
             fileRequests.push({ ...repoInfo, path: hit.path });
-            selectedHits.set(num, hit);
         }
         
         if (fileRequests.length === 0) {
             return {
                 success: false,
                 files: [],
-                error: 'No valid files found for the specified result numbers.'
+                error: 'No valid files found for the specified result numbers on this page.',
+                page,
+                pageSize,
+                totalPages,
+                totalResults,
             };
         }
 
         // Fetch files from GitHub
-        log.info(`Fetching ${fileRequests.length} files from GitHub...`);
+        log.info(`Fetching ${fileRequests.length} files from GitHub for page ${page}...`);
         const githubResults = await fetchGitHubFiles(fileRequests);
 
         // Map GitHub results back to our format
-        const files = params.resultNumbers.map(num => {
-            const hit = selectedHits.get(num);
-            if (!hit) {
-                return {
-                    number: num,
-                    repo: '',
-                    path: '',
-                    content: '',
-                    error: 'Result number not found or invalid.'
-                };
-            }
-
+        const files = pageHits.map(hit => {
             const repoInfo = parseGitHubRepo(hit.repo);
             const githubResult = githubResults.find(
                 r => r.repo === repoInfo?.repo && r.path === hit.path
             );
 
-            if (!githubResult) {
+            if (!githubResult || githubResult.error) {
                 return {
-                    number: num,
+                    number: hit.number,
                     repo: hit.repo,
                     path: hit.path,
                     content: '',
-                    error: 'File not found in GitHub batch response.'
+                    error: githubResult?.error || 'File not found in GitHub batch response.'
                 };
             }
 
             return {
-                number: num,
+                number: hit.number,
                 repo: hit.repo,
                 path: hit.path,
                 content: githubResult.content,
-                error: githubResult.error
             };
         });
 
-        log.info(`Successfully retrieved ${files.filter(f => !f.error).length} files.`);
+        log.info(`Successfully retrieved ${files.filter(f => !f.error).length} files for page ${page}.`);
         return {
             success: true,
-            files
+            files,
+            page,
+            pageSize,
+            totalPages,
+            totalResults,
         };
     } catch (err) {
         context.log.error('Batch retrieval failed with an unexpected error.', { error: err });
