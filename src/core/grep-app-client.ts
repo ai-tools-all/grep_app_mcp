@@ -2,6 +2,13 @@ import axios from 'axios';
 import { GrepAppResponse, SearchParams } from './types.js';
 import { IHits, createHits, addHit, mergeHits } from './hits.js';
 import { logger } from './logger.js';
+import fs from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
+
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+const MAX_CACHE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB in bytes
+const CACHE_DIR = path.join(process.cwd(), 'cache');
 
 /**
  * Fetches a single page of results from the grep.app API.
@@ -9,7 +16,120 @@ import { logger } from './logger.js';
  * @param args The search arguments.
  * @returns An object containing the next page number, the hits found, and the total count.
  */
+interface CacheEntry<T> {
+    data: T;
+    timestamp: number;
+    size: number;
+}
+
+function getCacheKey(page: number, args: SearchParams): string {
+    const key = JSON.stringify({ page, ...args });
+    return crypto.createHash('md5').update(key).digest('hex');
+}
+
+async function getCachedResults(cacheKey: string): Promise<{ nextPage: number | null, hits: IHits, count: number } | null> {
+    try {
+        const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
+        const data = await fs.readFile(cacheFile, 'utf-8');
+        const entry = JSON.parse(data) as CacheEntry<{ nextPage: number | null, hits: IHits, count: number }>;
+        
+        // Check if cache entry has expired
+        if (Date.now() - entry.timestamp > CACHE_TTL) {
+            logger.debug('Cache expired, deleting file', { cacheKey });
+            await fs.unlink(cacheFile).catch(() => {}); // Delete expired cache
+            return null;
+        }
+        
+        const ageInMinutes = Math.round((Date.now() - entry.timestamp) / (60 * 1000));
+        logger.info('Cache hit! Serving results from cache', { 
+            cacheKey, 
+            ageInMinutes,
+            expiresInMinutes: Math.round((CACHE_TTL - (Date.now() - entry.timestamp)) / (60 * 1000))
+        });
+        
+        return entry.data;
+    } catch (error) {
+        return null;
+    }
+}
+
+async function cleanupCache(): Promise<void> {
+    logger.debug('Starting cache cleanup');
+    try {
+        const files = await fs.readdir(CACHE_DIR);
+        let totalSize = 0;
+        const cacheFiles: { file: string; stats: Awaited<ReturnType<typeof fs.stat>> }[] = [];
+
+        // Get file stats and calculate total size
+        for (const file of files) {
+            if (!file.endsWith('.json')) continue;
+            const filePath = path.join(CACHE_DIR, file);
+            const stats = await fs.stat(filePath);
+            totalSize += Number(stats.size);
+            cacheFiles.push({ file: filePath, stats });
+        }
+
+        // If total size exceeds limit, delete oldest files
+        if (totalSize > MAX_CACHE_SIZE) {
+            cacheFiles.sort((a, b) => a.stats.mtime.getTime() - b.stats.mtime.getTime());
+            
+            logger.info('Cache size exceeds limit, cleaning up', {
+                currentSize: totalSize,
+                maxSize: MAX_CACHE_SIZE,
+                filesToClean: cacheFiles.length
+            });
+            
+            while (totalSize > MAX_CACHE_SIZE && cacheFiles.length > 0) {
+                const oldestFile = cacheFiles.shift();
+                if (oldestFile) {
+                    await fs.unlink(oldestFile.file);
+                    totalSize -= Number(oldestFile.stats.size);
+                    logger.debug('Deleted old cache file', { file: oldestFile.file });
+                }
+            }
+        }
+    } catch (error) {
+        logger.error('Cache cleanup failed', { error });
+    }
+}
+
+async function cacheResults(cacheKey: string, results: { nextPage: number | null, hits: IHits, count: number }): Promise<void> {
+    try {
+        await fs.mkdir(CACHE_DIR, { recursive: true });
+        const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
+        
+        const entry: CacheEntry<typeof results> = {
+            data: results,
+            timestamp: Date.now(),
+            size: Buffer.from(JSON.stringify(results)).length
+        };
+        
+        await fs.writeFile(cacheFile, JSON.stringify(entry), 'utf-8');
+        logger.debug('Cached results saved', { cacheKey });
+        
+        // Run cleanup in the background
+        cleanupCache().catch(error => {
+            logger.error('Background cache cleanup failed', { error });
+        });
+    } catch (error) {
+        logger.error('Failed to cache results', { error, cacheKey });
+    }
+}
+
 export async function fetchGrepApp(page: number, args: SearchParams): Promise<{ nextPage: number | null, hits: IHits, count: number }> {
+    const cacheKey = getCacheKey(page, args);
+    const cachedResults = await getCachedResults(cacheKey);
+    
+    if (cachedResults) {
+        return cachedResults;
+    }
+    
+    logger.info('Cache miss! Fetching fresh results from API', { 
+        cacheKey, 
+        page,
+        query: args.query
+    });
+
     const params: any = { q: args.query, page, per_page: 20 };
     const url = "https://grep.app/api/search";
 
@@ -37,7 +157,14 @@ export async function fetchGrepApp(page: number, args: SearchParams): Promise<{ 
 
         const hasMorePages = count > 20 * page;
         const nextPage = hasMorePages ? page + 1 : null;
-        return { nextPage, hits, count };
+        const results = { nextPage, hits, count };
+        await cacheResults(cacheKey, results);
+        logger.info('Results cached successfully', { 
+            cacheKey,
+            page,
+            size: Buffer.from(JSON.stringify(results)).length
+        });
+        return results;
     } catch (error) {
         if (axios.isAxiosError(error)) {
             const errorMessage = `API request failed: ${error.response?.statusText || error.message}`;
