@@ -15,19 +15,31 @@ MODE=${1:-http}
 ENV=${2:-dev}
 
 case "$MODE" in
+    "build")
+        echo "🏗️  Building standalone distribution..."
+        ./build.sh
+        echo "✅ Build complete! Files available in dist/"
+        ;;
+    "binary")
+        echo "🔧 Building standalone binary executables..."
+        ./build-binary.sh
+        echo "✅ Binary build complete! Executables available in dist-binary/"
+        ;;
     "http")
         case "$ENV" in
             "dev")
-                echo "Starting HTTP server in development mode..."
+                echo "🚀 Starting HTTP server in development mode..."
+                echo "📡 Server will be available at: http://localhost:8603"
                 npm run dev
                 ;;
             "prod")
-                echo "Building and starting HTTP server in production mode..."
+                echo "🏗️  Building and starting HTTP server in production mode..."
                 npm run build
+                echo "🚀 Starting production HTTP server..."
                 npm run start
                 ;;
             *)
-                echo "Invalid environment. Use 'dev' or 'prod'"
+                echo "❌ Invalid environment. Use 'dev' or 'prod'"
                 exit 1
                 ;;
         esac
@@ -35,16 +47,17 @@ case "$MODE" in
     "stdio")
         case "$ENV" in
             "dev")
-                echo "Starting STDIO server in development mode..."
+                echo "🚀 Starting STDIO server in development mode..."
                 npm run dev-stdio
                 ;;
             "prod")
-                echo "Building and starting STDIO server in production mode..."
+                echo "🏗️  Building and starting STDIO server in production mode..."
                 npm run build
+                echo "🚀 Starting production STDIO server..."
                 npm run start-stdio
                 ;;
             *)
-                echo "Invalid environment. Use 'dev' or 'prod'"
+                echo "❌ Invalid environment. Use 'dev' or 'prod'"
                 exit 1
                 ;;
         esac
@@ -55,6 +68,8 @@ case "$MODE" in
         echo "Usage: ./run.sh [mode] [environment]"
         echo ""
         echo "Modes:"
+        echo "  build   - Build standalone distribution"
+        echo "  binary  - Build standalone binary executables"
         echo "  http    - Run HTTP server (default)"
         echo "  stdio   - Run STDIO server"
         echo ""
@@ -64,6 +79,8 @@ case "$MODE" in
         echo ""
         echo "Examples:"
         echo "  ./run.sh                  # HTTP dev (default)"
+        echo "  ./run.sh build            # Build standalone files"
+        echo "  ./run.sh binary           # Build binary executables"
         echo "  ./run.sh http dev         # HTTP dev"
         echo "  ./run.sh http prod        # HTTP prod"
         echo "  ./run.sh stdio dev        # STDIO dev"
@@ -74,7 +91,7 @@ case "$MODE" in
         echo "  - SSE: http://localhost:8603/sse"
         ;;
     *)
-        echo "Invalid mode. Use 'http' or 'stdio'"
+        echo "❌ Invalid mode. Use 'build', 'binary', 'http', or 'stdio'"
         echo "Run './run.sh help' for usage information"
         exit 1
         ;;

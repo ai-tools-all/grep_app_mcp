@@ -5,3 +5,4 @@ dist
 dist_old
 cache
 .aider*
+dist-binary
